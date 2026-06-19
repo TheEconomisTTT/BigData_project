@@ -196,17 +196,9 @@ pytest -v
 | FLINK_WATERMARK_SECONDS | 5 | Задержка watermark |
 | FLINK_PARALLELISM | 1 | Параллелизм Flink |
 
-## Остановка
 
-### Сохраняя данные
-```bash
-docker compose down
-```
 
-### С удалением всех данных
-```bash
-docker compose down -v
-```
+# (Опционально) Блок с фиксом проблем при запуске
 
 ## Типичные проблемы
 
