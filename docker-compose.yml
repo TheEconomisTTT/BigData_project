@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  kafka:
+    image: bitnami/kafka:3.9.1
+    container_name: iot-kafka
+    ports:
+      - "9092:29092"
+    environment:
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092,EXTERNAL://localhost:9092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics.sh --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 30s
+    networks:
+      - iot-net
+
+  postgres:
+    image: postgres:16
+    container_name: iot-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-iot}
+      POSTGRES_USER: ${POSTGRES_USER:-iot_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-iot_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/ddl.sql:/docker-entrypoint-initdb.d/01_ddl.sql
+      - ./postgres/dml.sql:/docker-entrypoint-initdb.d/02_dml.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-iot_user} -d ${POSTGRES_DB:-iot}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - iot-net
+
+  jobmanager:
+    build:
+      context: .
+      dockerfile: flink/Dockerfile
+    container_name: iot-flink-jobmanager
+    ports:
+      - "8081:8081"
+    command: jobmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        parallelism.default: 1
+        taskmanager.numberOfTaskSlots: 4
+        execution.checkpointing.interval: 30000
+    volumes:
+      - ./flink:/opt/flink/jobs
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/overview"]
+      interval: 10s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - iot-net
+
+  taskmanager:
+    build:
+      context: .
+      dockerfile: flink/Dockerfile
+    container_name: iot-flink-taskmanager
+    command: taskmanager
+    environment:
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        parallelism.default: 1
+        taskmanager.numberOfTaskSlots: 4
+    volumes:
+      - ./flink:/opt/flink/jobs
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+    networks:
+      - iot-net
+
+volumes:
+  postgres_data:
+
+networks:
+  iot-net:
+    driver: bridge
